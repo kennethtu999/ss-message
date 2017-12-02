@@ -75,7 +75,7 @@ class Message {
       functionName.apply(scope, functionArgs);
     };
 
-    async.each(plugins, eachPluginItor, () => {
+    async.eachLimit(plugins, 1, eachPluginItor, () => {
       callback(null, this);
     });
   }

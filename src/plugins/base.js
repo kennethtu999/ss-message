@@ -4,6 +4,7 @@ import Lemmer from 'lemmer';
 import async from 'async';
 import _ from 'lodash';
 import pos from 'pos';
+import http from 'http';
 
 const tagger = new pos.Tagger();
 const lexer = new pos.Lexer();
@@ -13,6 +14,68 @@ const addTags = function addTags(cb) {
   cb();
 };
 
+const addChineseNlp = function addNlp(cb) {
+  var date_clean_string = this.message.original;
+
+  //Kenneth 20171129 轉換TOPIC時也會呼叫，但不用再做NLP了，預設要求Fully Match
+  if (date_clean_string.match(/^__/)) {
+    this.message.cnlp = [
+      { output : [
+          {"pos_tag" : "NN",
+           "word" : date_clean_string
+          }
+        ]
+      }
+    ]
+    cb();
+    return;
+  }
+
+  date_clean_string = date_clean_string.replace(/昨日|昨天|前天|大前天|上星期|下星期|上?周|下?周|上上個月|上個月|上?星期/g,"日期");
+  date_clean_string = date_clean_string.replace(/可否|是不是/g,"是否");
+
+  //cleaning
+  date_clean_string = date_clean_string.replace(/做的/g,"做");
+
+  const postData = JSON.stringify({
+    'strings' : [date_clean_string],
+    'tree': false
+  });
+
+  const options = {
+    hostname: '127.0.0.1',
+    port: 9000,
+    path: '/api/v1/query',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData)
+    }
+  };
+
+  const req = http.request(options, (res) => {
+    res.setEncoding('utf8');
+    res.on('data', (chunk) => {
+      //console.log(`BODY: ${chunk}`);
+      this.message.cnlp = JSON.parse(chunk);
+      //console.log("KennethTrace CNLP DATA: " + JSON.stringify(this.message.cnlp));
+      cb();
+    });
+    res.on('end', () => {
+      console.log('No more data in response.');
+    });
+  });
+
+  req.on('error', (e) => {
+    console.error(`problem with request: ${e.message}`);
+    cb(e);
+  });
+
+  // write data to request body
+  req.write(postData);
+  req.end();
+};
+
 const addNlp = function addNlp(cb) {
   var date_clean_string = this.message.original.replace(/(\d+)\so'?clock/,'$1:00');
   this.message.nlp = nlp(date_clean_string);
@@ -20,30 +83,71 @@ const addNlp = function addNlp(cb) {
 };
 
 const addEntities = function addEntities(cb) {
-  const entities = this.message.nlp.match('(#Person|#Place|#Organization)').out('array');
-  this.message.entities = entities;
-
-  // For legacy support
-  this.message.names = this.message.nlp.people().out('array');
+  // const entities = this.message.nlp.match('(#Person|#Place|#Organization)').out('array');
+  // this.message.entities = entities;
+  //
+  // // For legacy support
+  // this.message.names = this.message.nlp.people().out('array');
+  // cb();
+  var ary = [];
+  this.message.cnlp[0].output.forEach(function(entry) {
+    if (entry.hasOwnProperty('person')) ary.push(entry.word)
+  })
+  this.message.entities = ary;
   cb();
 };
 
 const addDates = function addDates(cb) {
-  this.message.dates = this.message.nlp.dates().out('array');
+  //this.message.dates = this.message.nlp.dates().out('array');
+  var ary = [];
+  this.message.cnlp[0].output.forEach(function(entry) {
+    if (entry.hasOwnProperty('label') && entry.label == 'nmod:tmod')
+      ary.push(entry.word);
+    else if (entry.word == '日期')
+      ary.push(entry.word);
+  })
+  this.message.dates = ary;
   cb();
 };
 
 const addWords = function addWords(cb) {
-  this.message.words = this.message.clean.split(' ');
+  //this.message.words = this.message.clean.split(' ');
+  var ary = [];
+  this.message.cnlp[0].output.forEach(function(entry) {
+    ary.push(entry.word);
+  });
+  this.message.words = ary;
   cb();
 };
 
 const addPos = function addPos(cb) {
-  this.message.nouns = this.message.nlp.match('#Noun').out('array');
-  this.message.adverbs = this.message.nlp.match('#Adverb').out('array');
-  this.message.verbs = this.message.nlp.match('#Verb').out('array');
-  this.message.adjectives = this.message.nlp.match('#Adjective').out('array');
-  this.message.pronouns = this.message.nlp.match('#Pronoun').out('array');
+  // this.message.nouns = this.message.nlp.match('#Noun').out('array');
+  // this.message.adverbs = this.message.nlp.match('#Adverb').out('array');
+  // this.message.verbs = this.message.nlp.match('#Verb').out('array');
+  // this.message.adjectives = this.message.nlp.match('#Adjective').out('array');
+  // this.message.pronouns = this.message.nlp.match('#Pronoun').out('array');
+  this.message.nouns = [];
+  this.message.adverbs = [];
+  this.message.verbs = [];
+  this.message.adjectives = [];
+  this.message.pronouns = [];
+  var msg = this.message;
+  this.message.cnlp[0].output.forEach(function(entry) {
+    if (entry.pos_tag === 'NN')
+      msg.nouns.push(entry.word);
+    else if (entry.pos_tag === 'RB')
+      msg.adverbs.push(entry.word);
+    else if (entry.pos_tag === 'VV')
+      msg.verbs.push(entry.word);
+    else if (entry.pos_tag === 'PRP')
+      msg.pronouns.push(entry.word);
+    else if (entry.pos_tag === 'JJ')
+      msg.adjectives.push(entry.word);
+    else {
+      msg.nouns.push(entry.word);
+      console.log("not assigne group: " + JSON.stringify(entry));
+    }
+  })
 
   // Fix for pronouns getting mixed in with nouns
   _.pullAll(this.message.nouns, this.message.pronouns);
@@ -106,7 +210,7 @@ const fixup = function fixup(cb) {
 
   // singalize / lemmatize
   // This does a slightly better job than `.split(" ")`
-  this.message.words = lexer.lex(this.message.clean);
+  //this.message.words = lexer.lex(this.message.clean);
   const taggedWords = tagger.tag(this.message.words);
 
   const itor = (hash, next) => {
@@ -128,24 +232,29 @@ const fixup = function fixup(cb) {
 
 const addQuestionTypes = function addQuestionTypes(cb) {
   // Classify Question
-  const questionWords = ['who', 'whose', 'whom', 'what', 'where', 'when', 'why', 'which', 'name', 'did', 'do', 'does', 'have', 'had', 'has'];
-  let isQuestion = false;
+  //const questionWords = ['who', 'whose', 'whom', 'what', 'where', 'when', 'why', 'which', 'name', 'did', 'do', 'does', 'have', 'had', 'has'];
+  //let isQuestion = false;
 
-  if (this.message.raw.slice(-1) === '?') isQuestion = true;
-  
-  if (this.message.words.length !== 0){
-    if (questionWords.indexOf(this.message.words[0].toLowerCase()) !== -1) {
-      isQuestion = true;
-    }
-  }
-  this.message.isQuestion = isQuestion;
+  //if (this.message.raw.slice(-1) === '?') isQuestion = true;
 
+  //if (this.message.words.length !== 0) {
+  //  if (questionWords.indexOf(this.message.words[0].toLowerCase()) !== -1) {
+  //    isQuestion = true;
+  //  }
+  //}
+  //this.message.isQuestion = isQuestion;
+  var output = this.message.cnlp[0].output;
+  if (output[0].word == '是否')
+    this.message.isQuestion = true;
+  else if (output[output.lengh-1] == "嗎")
+    this.message.isQuestion = true;
   cb();
 };
 
 // Order here matters
 export default {
   addTags,
+  addChineseNlp,
   addNlp,
   addEntities,
   addDates,
