@@ -5,16 +5,19 @@ import async from 'async';
 import _ from 'lodash';
 import pos from 'pos';
 import http from 'http';
+import nodejieba from 'nodejieba';
 
 const tagger = new pos.Tagger();
 const lexer = new pos.Lexer();
+
+const debug = require('debug-levels')('SS:message');
 
 const addTags = function addTags(cb) {
   this.message.tags = lang.tag.all(this.message.original);
   cb();
 };
 
-const addChineseNlp = function addNlp(cb) {
+const addChineseNlpFromSyntaxNet = function addNlp(cb) {
   var date_clean_string = this.message.original;
 
   //Kenneth 20171129 轉換TOPIC時也會呼叫，但不用再做NLP了，預設要求Fully Match
@@ -74,6 +77,29 @@ const addChineseNlp = function addNlp(cb) {
   // write data to request body
   req.write(postData);
   req.end();
+};
+
+
+
+const addChineseNlpFromJieba = function addNlp(cb) {
+  var date_clean_string = this.message.original;
+
+  //Kenneth 20171129 轉換TOPIC時也會呼叫，但不用再做NLP了，預設要求Fully Match
+  if (date_clean_string.match(/^__/)) {
+    this.message.cnlp = [
+      { output : [
+          {"pos_tag" : "NN",
+           "word" : date_clean_string
+          }
+        ]
+      }
+    ]
+    cb();
+  } else {
+    this.message.cnlp = nodejieba.query(date_clean_string);
+    debug.log(JSON.stringify(this.message.cnlp));
+    cb();
+  }
 };
 
 const addNlp = function addNlp(cb) {
@@ -254,7 +280,8 @@ const addQuestionTypes = function addQuestionTypes(cb) {
 // Order here matters
 export default {
   addTags,
-  addChineseNlp,
+  //addChineseNlp,
+  addChineseNlpFromJieba,
   addNlp,
   addEntities,
   addDates,
