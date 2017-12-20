@@ -97,7 +97,7 @@ const addChineseNlpFromJieba = function addNlp(cb) {
     cb();
   } else {
     this.message.cnlp = nodejieba.query(date_clean_string);
-    debug.log("CNLP2: " + JSON.stringify(this.message.cnlp));
+    debug.verbose("CNLP2: ", JSON.stringify(this.message.cnlp));
     cb();
   }
 };
